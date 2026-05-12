@@ -8,12 +8,16 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-VAULT = Path("/Users/I543625/Documents/Obsidian Vault")
-MODEL = "claude-sonnet-4-6"
-# TODO: Anthropic has no working RSS — /news/rss.xml and /rss.xml both 404
-ANTHROPIC_NEWS = "https://www.anthropic.com/news"
-OPENAI_RSS = "https://openai.com/news/rss.xml"
-STATE_FILE = Path("state.json")
+# Load config
+cfg = json.loads(Path("config.json").read_text())
+VAULT = Path(cfg["vault_path"])
+MODEL = cfg["model"]
+ANTHROPIC_NEWS = cfg["anthropic_news_url"]
+OPENAI_RSS = cfg["openai_rss_url"]
+STATE_FILE = Path(cfg["state_file"])
+MAX_ARTICLES = cfg["max_articles_per_source"]
+TIMEOUT = cfg["request_timeout"]
+USER_AGENT = cfg["user_agent"]
 MONTHS = {m: i for i, m in enumerate(["January","February","March","April","May","June","July","August","September","October","November","December"], 1)}
 
 log = lambda lvl, msg: print(f"[{datetime.now(timezone.utc).isoformat(timespec='seconds')}] [{lvl}] {msg}")
@@ -28,7 +32,7 @@ def save_state(state):
 def fetch_page(url):
     """Returns (title, body_text) or ("", "") on failure."""
     try:
-        r = requests.get(url, timeout=15, headers={"User-Agent": "Magpie/0.1"})
+        r = requests.get(url, timeout=TIMEOUT, headers={"User-Agent": USER_AGENT})
         r.raise_for_status()
         soup = BeautifulSoup(r.text, "html.parser")
         h1 = soup.find("h1")
@@ -42,7 +46,7 @@ def fetch_page(url):
 def fetch_anthropic():
     articles, slugs = [], set()
     try:
-        r = requests.get(ANTHROPIC_NEWS, timeout=15, headers={"User-Agent": "Magpie/0.1"})
+        r = requests.get(ANTHROPIC_NEWS, timeout=TIMEOUT, headers={"User-Agent": USER_AGENT})
         r.raise_for_status()
         for a in BeautifulSoup(r.text, "html.parser").find_all("a", href=True):
             href = a["href"]
@@ -61,7 +65,7 @@ def fetch_anthropic():
                          if m else today)
             articles.append({"url": url, "title": title, "published": published,
                              "source": "claude", "content": content})
-            if len(articles) >= 20:
+            if len(articles) >= MAX_ARTICLES:
                 break
     except Exception as e:
         log("ERROR", f"fetch_anthropic failed: {e}")
@@ -73,7 +77,7 @@ def fetch_openai():
         feed = feedparser.parse(OPENAI_RSS)
         if feed.bozo and not feed.entries:
             raise ValueError(feed.bozo_exception)
-        for entry in feed.entries[:20]:
+        for entry in feed.entries[:MAX_ARTICLES]:
             url = entry.get("link", "")
             if not url:
                 continue

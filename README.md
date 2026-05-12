@@ -10,6 +10,16 @@ cp .env.example .env
 # 编辑 .env,填入你的 ANTHROPIC_API_KEY
 ```
 
+## 配置
+
+编辑 `config.json` 自定义：
+- `vault_path` — Obsidian vault 路径
+- `model` — 使用的 Claude 模型
+- `anthropic_news_url` — Anthropic 新闻页面 URL
+- `openai_rss_url` — OpenAI RSS 源 URL
+- `max_articles_per_source` — 每个源最多处理的文章数
+- 等等
+
 ## 手动运行
 
 ```bash
