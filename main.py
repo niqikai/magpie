@@ -8,16 +8,15 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# Load config
-cfg = json.loads(Path("config.json").read_text())
-VAULT = Path(cfg["vault_path"])
-MODEL = cfg["model"]
-ANTHROPIC_NEWS = cfg["anthropic_news_url"]
-OPENAI_RSS = cfg["openai_rss_url"]
-STATE_FILE = Path(cfg["state_file"])
-MAX_ARTICLES = cfg["max_articles_per_source"]
-TIMEOUT = cfg["request_timeout"]
-USER_AGENT = cfg["user_agent"]
+# Load from .env (with defaults)
+VAULT = Path(os.getenv("VAULT_PATH", "/Users/I543625/Documents/Obsidian Vault"))
+MODEL = os.getenv("MODEL", "claude-sonnet-4-6")
+ANTHROPIC_NEWS = os.getenv("ANTHROPIC_NEWS_URL", "https://www.anthropic.com/news")
+OPENAI_RSS = os.getenv("OPENAI_RSS_URL", "https://openai.com/news/rss.xml")
+STATE_FILE = Path(os.getenv("STATE_FILE", "state.json"))
+MAX_ARTICLES = int(os.getenv("MAX_ARTICLES_PER_SOURCE", "20"))
+TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", "15"))
+USER_AGENT = os.getenv("USER_AGENT", "Magpie/0.1")
 MONTHS = {m: i for i, m in enumerate(["January","February","March","April","May","June","July","August","September","October","November","December"], 1)}
 
 log = lambda lvl, msg: print(f"[{datetime.now(timezone.utc).isoformat(timespec='seconds')}] [{lvl}] {msg}")

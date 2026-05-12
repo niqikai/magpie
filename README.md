@@ -12,13 +12,20 @@ cp .env.example .env
 
 ## 配置
 
-编辑 `config.json` 自定义：
-- `vault_path` — Obsidian vault 路径
-- `model` — 使用的 Claude 模型
-- `anthropic_news_url` — Anthropic 新闻页面 URL
-- `openai_rss_url` — OpenAI RSS 源 URL
-- `max_articles_per_source` — 每个源最多处理的文章数
-- 等等
+编辑 `.env` 自定义（所有配置可选，有默认值）：
+
+```bash
+ANTHROPIC_API_KEY=sk-ant-...          # 必填
+VAULT_PATH=...                         # Obsidian vault 路径
+MODEL=claude-sonnet-4-6                # 使用的 Claude 模型
+ANTHROPIC_NEWS_URL=...                 # Anthropic 新闻页面
+OPENAI_RSS_URL=...                     # OpenAI RSS 源
+MAX_ARTICLES_PER_SOURCE=20             # 每个源最多处理的文章数
+REQUEST_TIMEOUT=15                     # 网络请求超时秒数
+USER_AGENT=Magpie/0.1                  # HTTP User-Agent
+```
+
+在 CI/容器中可直接设置环境变量，无需修改文件。
 
 ## 手动运行
 
