@@ -12,7 +12,7 @@ load_dotenv()
 
 # Load from .env (with defaults)
 VAULT = Path(os.getenv("VAULT_PATH", "/Users/I543625/Documents/Obsidian Vault"))
-MODEL         = os.getenv("MODEL",         "gpt-4o-mini")
+MODEL         = os.getenv("MODEL",         "gpt-4o")
 MODEL_BASE_URL = os.getenv("MODEL_BASE_URL", "https://models.inference.ai.azure.com")
 ANTHROPIC_NEWS     = os.getenv("ANTHROPIC_NEWS_URL",     "https://www.anthropic.com/news")
 ANTHROPIC_RESEARCH = os.getenv("ANTHROPIC_RESEARCH_URL", "https://www.anthropic.com/research")
