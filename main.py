@@ -173,14 +173,20 @@ def write_article(article, parsed, stem):
         f"## 原文正文\n{article['content'][:8000]}\n", encoding="utf-8")
     log("INFO", f"wrote Sources/{src_dir}/{stem}.md")
 
+DIGEST_MAX_ARTICLES = 20   # digest 最多收录的文章数
+DIGEST_SUMMARY_LEN  = 250  # 每篇摘要在 digest block 中的最大字符数
+DIGEST_MAX_BULLETS  = 3    # 每篇最多取几条要点
+
 def write_digest(done, today, client):
+    # 限制 block 大小，避免超过模型 token 上限
+    subset = done[:DIGEST_MAX_ARTICLES]
     block = "\n\n".join(
         f"标题: {d['article']['title']}\n来源: {SOURCES[d['article']['source']][1]}\n"
-        f"摘要: {d['parsed'].get('summary','')}\n要点:\n"
-        + "\n".join(f"- {b}" for b in d['parsed'].get("bullets", []))
-        for d in done)
+        f"摘要: {d['parsed'].get('summary','')[:DIGEST_SUMMARY_LEN]}\n要点:\n"
+        + "\n".join(f"- {b}" for b in d['parsed'].get("bullets", [])[:DIGEST_MAX_BULLETS])
+        for d in subset)
     try:
-        prompt = Path("prompts/digest.txt").read_text().replace("{articles_block}", block)
+        prompt = Path("prompts/digest.txt").read_text().format(articles_block=block)
         text = client.chat.completions.create(model=MODEL, max_tokens=2048,
             messages=[{"role": "user", "content": prompt}]).choices[0].message.content
         theme_m = re.search(r"---THEME---\s*(.+?)(?=---ARTICLES---|$)", text, re.DOTALL)
@@ -197,7 +203,7 @@ def write_digest(done, today, client):
             return f"### [[{hit['stem'] if hit else sanitize(raw)}]] · {display}"
 
         arts = re.sub(rf"### (.+?) · ({display_pat})", fix_link, arts)
-        srcs = list({SOURCES[d["article"]["source"]][1] for d in done})
+        srcs = list({SOURCES[d["article"]["source"]][1] for d in subset})
         out = VAULT / "Daily" / f"{today}.md"
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(
@@ -205,8 +211,12 @@ def write_digest(done, today, client):
             f"# {today} 早间简报\n\n## 今日主题\n{theme}\n\n## 文章\n\n{arts}\n",
             encoding="utf-8")
         log("INFO", f"wrote Daily/{today}.md")
+    except (openai.AuthenticationError, openai.PermissionDeniedError) as e:
+        log("ERROR", f"write_digest API auth failure: {e}")
+        sys.exit(1)
     except Exception as e:
-        log_exc(f"write_digest failed: {e}")
+        log("ERROR", f"write_digest failed: {e}")
+        sys.exit(1)   # digest 失败视为整次 run 失败
 
 def main():
     client = OpenAI(base_url=MODEL_BASE_URL, api_key=os.environ["GITHUB_TOKEN"])
