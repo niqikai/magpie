@@ -1,8 +1,9 @@
-import json, os, re
+import json, os, re, sys
 from datetime import datetime, timezone
 from pathlib import Path
 
 import feedparser, requests
+import openai
 from openai import OpenAI
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
@@ -131,7 +132,12 @@ def summarize(article, client):
             elif chunk.startswith("TAGS"):
                 parts["tags"] = re.findall(r"#\w[\w-]*", chunk)
         return parts if parts.get("summary") else None
+    except (openai.AuthenticationError, openai.PermissionDeniedError) as e:
+        # 401/403：API 凭证或权限问题，整个 run 无法继续，立即终止
+        log("ERROR", f"API auth/permission failure: {e}")
+        sys.exit(1)
     except Exception as e:
+        # 单篇文章失败（网络超时、内容解析等），跳过继续处理其他文章
         log("ERROR", f"summarize failed '{article['title'][:50]}': {e}")
         return None
 
@@ -193,7 +199,7 @@ def main():
                 fetch_claude_blog() + fetch_openai() + fetch_openai_research() +
                 fetch_openai_dev_blog())
     log("INFO", f"fetched {len(articles)} articles total")
-    done = []
+    done, attempted = [], 0
     for article in articles:
         url = article["url"]
         if url in state["seen"]:
@@ -207,6 +213,7 @@ def main():
             save_state(state)
             continue
         log("INFO", f"summarizing: {article['title'][:60]}")
+        attempted += 1
         parsed = summarize(article, client)
         if parsed is None:
             continue
@@ -215,6 +222,10 @@ def main():
         save_state(state)
         done.append({"article": article, "parsed": parsed, "stem": stem})
     log("INFO", f"processed {len(done)} new articles")
+    if attempted > 0 and len(done) == 0:
+        # 有新文章尝试过摘要，但全部失败——API 很可能有问题
+        log("ERROR", f"attempted {attempted} articles but all failed — check API status")
+        sys.exit(1)
     if done:
         write_digest(done, today, client)
     else:
