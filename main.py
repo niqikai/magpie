@@ -2,7 +2,8 @@ import json, os, re
 from datetime import datetime, timezone
 from pathlib import Path
 
-import anthropic, feedparser, requests
+import feedparser, requests
+from openai import OpenAI
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 
@@ -10,7 +11,8 @@ load_dotenv()
 
 # Load from .env (with defaults)
 VAULT = Path(os.getenv("VAULT_PATH", "/Users/I543625/Documents/Obsidian Vault"))
-MODEL = os.getenv("MODEL", "claude-sonnet-4-6")
+MODEL         = os.getenv("MODEL",         "claude-3-5-sonnet")
+MODEL_BASE_URL = os.getenv("MODEL_BASE_URL", "https://models.inference.ai.azure.com")
 ANTHROPIC_NEWS     = os.getenv("ANTHROPIC_NEWS_URL",     "https://www.anthropic.com/news")
 ANTHROPIC_RESEARCH = os.getenv("ANTHROPIC_RESEARCH_URL", "https://www.anthropic.com/research")
 CLAUDE_BLOG        = os.getenv("CLAUDE_BLOG_URL",        "https://claude.com/blog")
@@ -115,8 +117,8 @@ def summarize(article, client):
         prompt = Path("prompts/summarize.txt").read_text().format(
             source=SOURCES[article["source"]][1],
             title=article["title"], content=article["content"][:12000])
-        text = client.messages.create(model=MODEL, max_tokens=1024,
-            messages=[{"role": "user", "content": prompt}]).content[0].text
+        text = client.chat.completions.create(model=MODEL, max_tokens=1024,
+            messages=[{"role": "user", "content": prompt}]).choices[0].message.content
         parts = {}
         for chunk in re.split(r"---SECTION---", text):
             chunk = chunk.strip()
@@ -157,8 +159,8 @@ def write_digest(done, today, client):
         for d in done)
     try:
         prompt = Path("prompts/digest.txt").read_text().format(articles_block=block)
-        text = client.messages.create(model=MODEL, max_tokens=2048,
-            messages=[{"role": "user", "content": prompt}]).content[0].text
+        text = client.chat.completions.create(model=MODEL, max_tokens=2048,
+            messages=[{"role": "user", "content": prompt}]).choices[0].message.content
         theme_m = re.search(r"---THEME---\s*(.+?)(?=---ARTICLES---|$)", text, re.DOTALL)
         theme = theme_m.group(1).strip() if theme_m else "今日无明显主线"
         arts_m = re.search(r"---ARTICLES---\s*(.+?)(?=---|$)", text, re.DOTALL)
@@ -185,7 +187,7 @@ def write_digest(done, today, client):
         log("ERROR", f"write_digest failed: {e}")
 
 def main():
-    client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+    client = OpenAI(base_url=MODEL_BASE_URL, api_key=os.environ["GITHUB_TOKEN"])
     state, today = load_state(), datetime.now().strftime("%Y-%m-%d")
     articles = (fetch_anthropic() + fetch_anthropic_research() +
                 fetch_claude_blog() + fetch_openai() + fetch_openai_research() +
