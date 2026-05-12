@@ -11,13 +11,26 @@ load_dotenv()
 # Load from .env (with defaults)
 VAULT = Path(os.getenv("VAULT_PATH", "/Users/I543625/Documents/Obsidian Vault"))
 MODEL = os.getenv("MODEL", "claude-sonnet-4-6")
-ANTHROPIC_NEWS = os.getenv("ANTHROPIC_NEWS_URL", "https://www.anthropic.com/news")
-OPENAI_RSS = os.getenv("OPENAI_RSS_URL", "https://openai.com/news/rss.xml")
-STATE_FILE = Path(os.getenv("STATE_FILE", "state.json"))
+ANTHROPIC_NEWS     = os.getenv("ANTHROPIC_NEWS_URL",     "https://www.anthropic.com/news")
+ANTHROPIC_RESEARCH = os.getenv("ANTHROPIC_RESEARCH_URL", "https://www.anthropic.com/research")
+CLAUDE_BLOG        = os.getenv("CLAUDE_BLOG_URL",        "https://claude.com/blog")
+OPENAI_RSS         = os.getenv("OPENAI_RSS_URL",         "https://openai.com/news/rss.xml")
+OPENAI_RESEARCH    = os.getenv("OPENAI_RESEARCH_URL",    "https://openai.com/research/index")
+STATE_FILE  = Path(os.getenv("STATE_FILE", "state.json"))
 MAX_ARTICLES = int(os.getenv("MAX_ARTICLES_PER_SOURCE", "20"))
-TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", "15"))
-USER_AGENT = os.getenv("USER_AGENT", "Magpie/0.1")
+TIMEOUT     = int(os.getenv("REQUEST_TIMEOUT", "15"))
+USER_AGENT  = os.getenv("USER_AGENT", "Magpie/0.1")
 MONTHS = {m: i for i, m in enumerate(["January","February","March","April","May","June","July","August","September","October","November","December"], 1)}
+DATE_RE = (r"(January|February|March|April|May|June|July|August|"
+           r"September|October|November|December)\s+(\d{1,2}),?\s+(\d{4})")
+# source key → (vault subdir, display name for digest)
+SOURCES = {
+    "anthropic":          ("Anthropic",         "Anthropic"),
+    "anthropic-research": ("Anthropic Research", "Anthropic Research"),
+    "claude":             ("Claude",             "Claude Blog"),
+    "openai":             ("OpenAI",             "OpenAI"),
+    "openai-research":    ("OpenAI Research",    "OpenAI Research"),
+}
 
 log = lambda lvl, msg: print(f"[{datetime.now(timezone.utc).isoformat(timespec='seconds')}] [{lvl}] {msg}")
 sanitize = lambda s: re.sub(r'[/\\:*?"<>|]', "", s).strip()
@@ -29,46 +42,50 @@ def save_state(state):
     tmp.rename(STATE_FILE)
 
 def fetch_page(url):
-    """Returns (title, body_text) or ("", "") on failure."""
+    """Returns (title, body_text) or ('', '') on failure."""
     try:
         r = requests.get(url, timeout=TIMEOUT, headers={"User-Agent": USER_AGENT})
         r.raise_for_status()
         soup = BeautifulSoup(r.text, "html.parser")
         h1 = soup.find("h1")
-        title = h1.get_text(strip=True) if h1 else ""
         el = soup.find("article") or soup.find("main")
-        return title, (el.get_text("\n", strip=True) if el else "")
+        return (h1.get_text(strip=True) if h1 else ""), (el.get_text("\n", strip=True) if el else "")
     except Exception as e:
         log("WARN", f"fetch failed {url}: {e}")
         return "", ""
 
-def fetch_anthropic():
-    articles, slugs = [], set()
+def _scrape(index_url, prefix, base, source):
+    """Generic scraper: fetches an HTML index page and yields article dicts."""
+    arts, slugs = [], set()
     try:
-        r = requests.get(ANTHROPIC_NEWS, timeout=TIMEOUT, headers={"User-Agent": USER_AGENT})
+        r = requests.get(index_url, timeout=TIMEOUT, headers={"User-Agent": USER_AGENT})
         r.raise_for_status()
+        tip = prefix.rstrip("/").split("/")[-1]
         for a in BeautifulSoup(r.text, "html.parser").find_all("a", href=True):
             href = a["href"]
             slug = href.rstrip("/").split("/")[-1]
-            if not href.startswith("/news/") or not slug or slug == "news" or slug in slugs:
+            if not href.startswith(prefix) or href.count("/") != prefix.count("/") or not slug or slug == tip or slug in slugs:
                 continue
             slugs.add(slug)
-            url = f"https://www.anthropic.com{href}"
+            url = base + href
             title, content = fetch_page(url)
             title = title or slug.replace("-", " ").title()
-            m = re.search(
-                r"(January|February|March|April|May|June|July|August|"
-                r"September|October|November|December)\s+(\d{1,2}),?\s+(\d{4})", content)
+            m = re.search(DATE_RE, content)
             today = datetime.now().strftime("%Y-%m-%d")
-            published = (f"{m.group(3)}-{MONTHS[m.group(1)]:02d}-{int(m.group(2)):02d}"
-                         if m else today)
-            articles.append({"url": url, "title": title, "published": published,
-                             "source": "claude", "content": content})
-            if len(articles) >= MAX_ARTICLES:
+            published = f"{m.group(3)}-{MONTHS[m.group(1)]:02d}-{int(m.group(2)):02d}" if m else today
+            arts.append({"url": url, "title": title, "published": published,
+                         "source": source, "content": content})
+            if len(arts) >= MAX_ARTICLES:
                 break
     except Exception as e:
-        log("ERROR", f"fetch_anthropic failed: {e}")
-    return articles
+        log("ERROR", f"fetch {source} failed: {e}")
+    return arts
+
+fetch_anthropic          = lambda: _scrape(ANTHROPIC_NEWS,     "/news/",     "https://www.anthropic.com", "anthropic")
+fetch_anthropic_research = lambda: _scrape(ANTHROPIC_RESEARCH, "/research/", "https://www.anthropic.com", "anthropic-research")
+fetch_claude_blog        = lambda: _scrape(CLAUDE_BLOG,        "/blog/",     "https://claude.com",        "claude")
+# TODO: openai.com/research/index returns 403 — blocked, will log error and skip each run
+fetch_openai_research    = lambda: _scrape(OPENAI_RESEARCH,    "/research/", "https://openai.com",        "openai-research")
 
 def fetch_openai():
     articles = []
@@ -81,12 +98,10 @@ def fetch_openai():
             if not url:
                 continue
             pp = entry.get("published_parsed")
-            published = (datetime(*pp[:3]).strftime("%Y-%m-%d") if pp
-                         else datetime.now().strftime("%Y-%m-%d"))
+            published = datetime(*pp[:3]).strftime("%Y-%m-%d") if pp else datetime.now().strftime("%Y-%m-%d")
             _, content = fetch_page(url)
             articles.append({"url": url, "title": entry.get("title", "Untitled"),
-                             "published": published,
-                             "source": "openai",
+                             "published": published, "source": "openai",
                              "content": content or entry.get("summary", "")})
     except Exception as e:
         log("ERROR", f"fetch_openai failed: {e}")
@@ -95,7 +110,7 @@ def fetch_openai():
 def summarize(article, client):
     try:
         prompt = Path("prompts/summarize.txt").read_text().format(
-            source="Claude" if article["source"] == "claude" else "OpenAI",
+            source=SOURCES[article["source"]][1],
             title=article["title"], content=article["content"][:12000])
         text = client.messages.create(model=MODEL, max_tokens=1024,
             messages=[{"role": "user", "content": prompt}]).content[0].text
@@ -116,8 +131,8 @@ def summarize(article, client):
         return None
 
 def write_article(article, parsed, stem):
-    src = "Claude" if article["source"] == "claude" else "OpenAI"
-    out = VAULT / "Sources" / src / f"{stem}.md"
+    src_dir, _ = SOURCES[article["source"]]
+    out = VAULT / "Sources" / src_dir / f"{stem}.md"
     out.parent.mkdir(parents=True, exist_ok=True)
     tags = parsed.get("tags", []) + [f"source/{article['source']}"]
     bullets = "\n".join(f"- {b}" for b in parsed.get("bullets", []))
@@ -129,12 +144,11 @@ def write_article(article, parsed, stem):
         f"# {article['title']}\n\n## 摘要\n{parsed.get('summary','')}\n\n"
         f"## 要点\n{bullets}\n\n## 原文链接\n{article['url']}\n\n"
         f"## 原文正文\n{article['content'][:8000]}\n", encoding="utf-8")
-    log("INFO", f"wrote Sources/{src}/{stem}.md")
+    log("INFO", f"wrote Sources/{src_dir}/{stem}.md")
 
 def write_digest(done, today, client):
     block = "\n\n".join(
-        f"标题: {d['article']['title']}\n"
-        f"来源: {'Claude' if d['article']['source'] == 'claude' else 'OpenAI'}\n"
+        f"标题: {d['article']['title']}\n来源: {SOURCES[d['article']['source']][1]}\n"
         f"摘要: {d['parsed'].get('summary','')}\n要点:\n"
         + "\n".join(f"- {b}" for b in d['parsed'].get("bullets", []))
         for d in done)
@@ -146,17 +160,17 @@ def write_digest(done, today, client):
         theme = theme_m.group(1).strip() if theme_m else "今日无明显主线"
         arts_m = re.search(r"---ARTICLES---\s*(.+?)(?=---|$)", text, re.DOTALL)
         arts = arts_m.group(1).strip() if arts_m else ""
+        display_pat = "|".join(re.escape(v[1]) for v in SOURCES.values())
 
         def fix_link(m):
-            raw, src = m.group(1), m.group(2).strip()
-            src_key = "claude" if "claude" in src.lower() else "openai"
-            hit = next((d for d in done
-                        if d["article"]["source"] == src_key
+            raw, display = m.group(1), m.group(2).strip()
+            src_key = next((k for k, v in SOURCES.items() if v[1] == display), None)
+            hit = next((d for d in done if d["article"]["source"] == src_key
                         and sanitize(d["article"]["title"])[:25] in sanitize(raw)[:35]), None)
-            return f"### [[{hit['stem'] if hit else sanitize(raw)}]] · {src}"
+            return f"### [[{hit['stem'] if hit else sanitize(raw)}]] · {display}"
 
-        arts = re.sub(r"### (.+?) · (Claude|OpenAI)", fix_link, arts)
-        srcs = list({("Claude" if d["article"]["source"] == "claude" else "OpenAI") for d in done})
+        arts = re.sub(rf"### (.+?) · ({display_pat})", fix_link, arts)
+        srcs = list({SOURCES[d["article"]["source"]][1] for d in done})
         out = VAULT / "Daily" / f"{today}.md"
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(
@@ -170,7 +184,8 @@ def write_digest(done, today, client):
 def main():
     client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
     state, today = load_state(), datetime.now().strftime("%Y-%m-%d")
-    articles = fetch_anthropic() + fetch_openai()
+    articles = (fetch_anthropic() + fetch_anthropic_research() +
+                fetch_claude_blog() + fetch_openai() + fetch_openai_research())
     log("INFO", f"fetched {len(articles)} articles total")
     done = []
     for article in articles:
@@ -179,8 +194,8 @@ def main():
             log("INFO", f"skip seen: {article['title'][:60]}")
             continue
         stem = f"{today} {sanitize(article['title'])}"
-        src = "Claude" if article["source"] == "claude" else "OpenAI"
-        if (VAULT / "Sources" / src / f"{stem}.md").exists():
+        src_dir, _ = SOURCES[article["source"]]
+        if (VAULT / "Sources" / src_dir / f"{stem}.md").exists():
             log("INFO", f"file exists, skip: {stem}.md")
             state["seen"][url] = datetime.now(timezone.utc).isoformat(timespec="seconds") + "Z"
             save_state(state)
