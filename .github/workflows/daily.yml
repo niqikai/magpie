@@ -5,6 +5,9 @@ on:
     - cron: '30 23 * * *'   # UTC 23:30 = 北京时间 07:30
   workflow_dispatch:          # 允许手动触发
 
+permissions:
+  models: read        # GitHub Models API 调用权限
+
 jobs:
   digest:
     runs-on: ubuntu-latest
