@@ -16,6 +16,7 @@ ANTHROPIC_RESEARCH = os.getenv("ANTHROPIC_RESEARCH_URL", "https://www.anthropic.
 CLAUDE_BLOG        = os.getenv("CLAUDE_BLOG_URL",        "https://claude.com/blog")
 OPENAI_RSS         = os.getenv("OPENAI_RSS_URL",         "https://openai.com/news/rss.xml")
 OPENAI_RESEARCH    = os.getenv("OPENAI_RESEARCH_URL",    "https://openai.com/research/index")
+OPENAI_DEV_BLOG    = os.getenv("OPENAI_DEV_BLOG_URL",    "https://developers.openai.com/blog")
 STATE_FILE  = Path(os.getenv("STATE_FILE", "state.json"))
 MAX_ARTICLES = int(os.getenv("MAX_ARTICLES_PER_SOURCE", "20"))
 TIMEOUT     = int(os.getenv("REQUEST_TIMEOUT", "15"))
@@ -30,6 +31,7 @@ SOURCES = {
     "claude":             ("Claude",             "Claude Blog"),
     "openai":             ("OpenAI",             "OpenAI"),
     "openai-research":    ("OpenAI Research",    "OpenAI Research"),
+    "openai-dev":         ("OpenAI Dev",         "OpenAI Dev"),
 }
 
 log = lambda lvl, msg: print(f"[{datetime.now(timezone.utc).isoformat(timespec='seconds')}] [{lvl}] {msg}")
@@ -86,6 +88,7 @@ fetch_anthropic_research = lambda: _scrape(ANTHROPIC_RESEARCH, "/research/", "ht
 fetch_claude_blog        = lambda: _scrape(CLAUDE_BLOG,        "/blog/",     "https://claude.com",        "claude")
 # TODO: openai.com/research/index returns 403 — blocked, will log error and skip each run
 fetch_openai_research    = lambda: _scrape(OPENAI_RESEARCH,    "/research/", "https://openai.com",        "openai-research")
+fetch_openai_dev_blog    = lambda: _scrape(OPENAI_DEV_BLOG,    "/blog/",     "https://developers.openai.com", "openai-dev")
 
 def fetch_openai():
     articles = []
@@ -185,7 +188,8 @@ def main():
     client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
     state, today = load_state(), datetime.now().strftime("%Y-%m-%d")
     articles = (fetch_anthropic() + fetch_anthropic_research() +
-                fetch_claude_blog() + fetch_openai() + fetch_openai_research())
+                fetch_claude_blog() + fetch_openai() + fetch_openai_research() +
+                fetch_openai_dev_blog())
     log("INFO", f"fetched {len(articles)} articles total")
     done = []
     for article in articles:
