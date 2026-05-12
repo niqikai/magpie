@@ -1,4 +1,4 @@
-import json, os, re, sys
+import json, os, re, sys, traceback
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -37,7 +37,11 @@ SOURCES = {
     "openai-dev":         ("OpenAI Dev",         "OpenAI Dev"),
 }
 
-log = lambda lvl, msg: print(f"[{datetime.now(timezone.utc).isoformat(timespec='seconds')}] [{lvl}] {msg}")
+log = lambda lvl, msg: print(f"[{datetime.now(timezone.utc).isoformat(timespec='seconds')}] [{lvl}] {msg}", flush=True)
+def log_exc(msg):
+    """ERROR 级别日志 + 完整堆栈，用于 except 块中。"""
+    log("ERROR", msg)
+    print(traceback.format_exc(), end="", flush=True)
 sanitize = lambda s: re.sub(r'[/\\:*?"<>|]', "", s).strip()
 load_state = lambda: json.loads(STATE_FILE.read_text()) if STATE_FILE.exists() else {"seen": {}}
 
@@ -56,7 +60,7 @@ def fetch_page(url):
         el = soup.find("article") or soup.find("main")
         return (h1.get_text(strip=True) if h1 else ""), (el.get_text("\n", strip=True) if el else "")
     except Exception as e:
-        log("WARN", f"fetch failed {url}: {e}")
+        log("WARN", f"fetch failed {url}: {type(e).__name__}: {e}")
         return "", ""
 
 def _scrape(index_url, prefix, base, source):
@@ -83,7 +87,7 @@ def _scrape(index_url, prefix, base, source):
             if len(arts) >= MAX_ARTICLES:
                 break
     except Exception as e:
-        log("ERROR", f"fetch {source} failed: {e}")
+        log_exc(f"fetch {source} failed: {e}")
     return arts
 
 fetch_anthropic          = lambda: _scrape(ANTHROPIC_NEWS,     "/news/",     "https://www.anthropic.com", "anthropic")
@@ -110,7 +114,7 @@ def fetch_openai():
                              "published": published, "source": "openai",
                              "content": content or entry.get("summary", "")})
     except Exception as e:
-        log("ERROR", f"fetch_openai failed: {e}")
+        log_exc(f"fetch_openai failed: {e}")
     return articles
 
 class _DailyLimitReached(Exception):
@@ -138,7 +142,7 @@ def summarize(article, client):
         return parts if parts.get("summary") else None
     except (openai.AuthenticationError, openai.PermissionDeniedError) as e:
         # 401/403：凭证或权限问题，整个 run 无法继续
-        log("ERROR", f"API auth/permission failure: {e}")
+        log_exc(f"API auth/permission failure: {e}")
         sys.exit(1)
     except openai.RateLimitError as e:
         if "86400" in str(e) or "ByDay" in str(e):
@@ -150,7 +154,7 @@ def summarize(article, client):
         return None
     except Exception as e:
         # 单篇文章失败，跳过继续处理其他文章
-        log("ERROR", f"summarize failed '{article['title'][:50]}': {e}")
+        log_exc(f"summarize failed '{article['title'][:50]}': {e}")
         return None
 
 def write_article(article, parsed, stem):
@@ -202,7 +206,7 @@ def write_digest(done, today, client):
             encoding="utf-8")
         log("INFO", f"wrote Daily/{today}.md")
     except Exception as e:
-        log("ERROR", f"write_digest failed: {e}")
+        log_exc(f"write_digest failed: {e}")
 
 def main():
     client = OpenAI(base_url=MODEL_BASE_URL, api_key=os.environ["GITHUB_TOKEN"])
