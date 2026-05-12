@@ -118,9 +118,10 @@ class _DailyLimitReached(Exception):
 
 def summarize(article, client):
     try:
-        prompt = Path("prompts/summarize.txt").read_text().format(
-            source=SOURCES[article["source"]][1],
-            title=article["title"], content=article["content"][:12000])
+        prompt = (Path("prompts/summarize.txt").read_text()
+                  .replace("{source}", SOURCES[article["source"]][1])
+                  .replace("{title}", article["title"])
+                  .replace("{content}", article["content"][:12000]))
         text = client.chat.completions.create(model=MODEL, max_tokens=1024,
             messages=[{"role": "user", "content": prompt}]).choices[0].message.content
         parts = {}
@@ -175,7 +176,7 @@ def write_digest(done, today, client):
         + "\n".join(f"- {b}" for b in d['parsed'].get("bullets", []))
         for d in done)
     try:
-        prompt = Path("prompts/digest.txt").read_text().format(articles_block=block)
+        prompt = Path("prompts/digest.txt").read_text().replace("{articles_block}", block)
         text = client.chat.completions.create(model=MODEL, max_tokens=2048,
             messages=[{"role": "user", "content": prompt}]).choices[0].message.content
         theme_m = re.search(r"---THEME---\s*(.+?)(?=---ARTICLES---|$)", text, re.DOTALL)
