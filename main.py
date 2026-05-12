@@ -12,7 +12,7 @@ load_dotenv()
 
 # Load from .env (with defaults)
 VAULT = Path(os.getenv("VAULT_PATH", "/Users/I543625/Documents/Obsidian Vault"))
-MODEL         = os.getenv("MODEL",         "gpt-4o")
+MODEL         = os.getenv("MODEL",         "gpt-4o-mini")
 MODEL_BASE_URL = os.getenv("MODEL_BASE_URL", "https://models.inference.ai.azure.com")
 ANTHROPIC_NEWS     = os.getenv("ANTHROPIC_NEWS_URL",     "https://www.anthropic.com/news")
 ANTHROPIC_RESEARCH = os.getenv("ANTHROPIC_RESEARCH_URL", "https://www.anthropic.com/research")
@@ -113,6 +113,9 @@ def fetch_openai():
         log("ERROR", f"fetch_openai failed: {e}")
     return articles
 
+class _DailyLimitReached(Exception):
+    pass
+
 def summarize(article, client):
     try:
         prompt = Path("prompts/summarize.txt").read_text().format(
@@ -133,11 +136,19 @@ def summarize(article, client):
                 parts["tags"] = re.findall(r"#\w[\w-]*", chunk)
         return parts if parts.get("summary") else None
     except (openai.AuthenticationError, openai.PermissionDeniedError) as e:
-        # 401/403：API 凭证或权限问题，整个 run 无法继续，立即终止
+        # 401/403：凭证或权限问题，整个 run 无法继续
         log("ERROR", f"API auth/permission failure: {e}")
         sys.exit(1)
+    except openai.RateLimitError as e:
+        if "86400" in str(e) or "ByDay" in str(e):
+            # 日限额耗尽，今天无法继续，停止处理剩余文章
+            log("WARN", f"Daily rate limit reached — stopping for today")
+            raise _DailyLimitReached()
+        # 分钟限额：跳过这篇，继续下一篇
+        log("WARN", f"Rate limited (per-minute), skipping '{article['title'][:50]}'")
+        return None
     except Exception as e:
-        # 单篇文章失败（网络超时、内容解析等），跳过继续处理其他文章
+        # 单篇文章失败，跳过继续处理其他文章
         log("ERROR", f"summarize failed '{article['title'][:50]}': {e}")
         return None
 
@@ -200,30 +211,33 @@ def main():
                 fetch_openai_dev_blog())
     log("INFO", f"fetched {len(articles)} articles total")
     done, attempted = [], 0
-    for article in articles:
-        url = article["url"]
-        if url in state["seen"]:
-            log("INFO", f"skip seen: {article['title'][:60]}")
-            continue
-        stem = f"{today} {sanitize(article['title'])}"
-        src_dir, _ = SOURCES[article["source"]]
-        if (VAULT / "Sources" / src_dir / f"{stem}.md").exists():
-            log("INFO", f"file exists, skip: {stem}.md")
+    try:
+        for article in articles:
+            url = article["url"]
+            if url in state["seen"]:
+                log("INFO", f"skip seen: {article['title'][:60]}")
+                continue
+            stem = f"{today} {sanitize(article['title'])}"
+            src_dir, _ = SOURCES[article["source"]]
+            if (VAULT / "Sources" / src_dir / f"{stem}.md").exists():
+                log("INFO", f"file exists, skip: {stem}.md")
+                state["seen"][url] = datetime.now(timezone.utc).isoformat(timespec="seconds") + "Z"
+                save_state(state)
+                continue
+            log("INFO", f"summarizing: {article['title'][:60]}")
+            attempted += 1
+            parsed = summarize(article, client)
+            if parsed is None:
+                continue
+            write_article(article, parsed, stem)
             state["seen"][url] = datetime.now(timezone.utc).isoformat(timespec="seconds") + "Z"
             save_state(state)
-            continue
-        log("INFO", f"summarizing: {article['title'][:60]}")
-        attempted += 1
-        parsed = summarize(article, client)
-        if parsed is None:
-            continue
-        write_article(article, parsed, stem)
-        state["seen"][url] = datetime.now(timezone.utc).isoformat(timespec="seconds") + "Z"
-        save_state(state)
-        done.append({"article": article, "parsed": parsed, "stem": stem})
+            done.append({"article": article, "parsed": parsed, "stem": stem})
+    except _DailyLimitReached:
+        log("INFO", f"daily limit reached — processed {len(done)} articles, rest will retry tomorrow")
     log("INFO", f"processed {len(done)} new articles")
     if attempted > 0 and len(done) == 0:
-        # 有新文章尝试过摘要，但全部失败——API 很可能有问题
+        # 有新文章尝试过摘要，但全部失败（非限额原因）
         log("ERROR", f"attempted {attempted} articles but all failed — check API status")
         sys.exit(1)
     if done:
