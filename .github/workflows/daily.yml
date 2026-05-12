@@ -36,7 +36,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VAULT_PATH: ./vault
           STATE_FILE: ./vault/.magpie-state.json
-          MODEL: claude-3-5-sonnet
+          MODEL: gpt-4o-mini
           MODEL_BASE_URL: https://models.inference.ai.azure.com
         run: python main.py
 
