@@ -1,5 +1,5 @@
 feedparser
-openai
+anthropic
 python-frontmatter
 python-dotenv
 requests

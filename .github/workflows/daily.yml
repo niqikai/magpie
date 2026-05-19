@@ -6,7 +6,7 @@ on:
   workflow_dispatch:          # 允许手动触发
 
 permissions:
-  models: read        # GitHub Models API 调用权限
+  contents: read
 
 jobs:
   digest:
@@ -33,11 +33,10 @@ jobs:
 
       - name: Run Magpie
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           VAULT_PATH: ./vault
           STATE_FILE: ./vault/.magpie-state.json
-          MODEL: gpt-4o-mini
-          MODEL_BASE_URL: https://models.inference.ai.azure.com
+          MODEL: claude-haiku-4-5
         run: python main.py
 
       - name: Create PR to Obsidian Vault

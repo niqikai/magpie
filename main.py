@@ -2,9 +2,8 @@ import json, os, re, sys, traceback
 from datetime import datetime, timezone
 from pathlib import Path
 
+import anthropic
 import feedparser, requests
-import openai
-from openai import OpenAI
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 
@@ -12,8 +11,7 @@ load_dotenv()
 
 # Load from .env (with defaults)
 VAULT = Path(os.getenv("VAULT_PATH", "/Users/I543625/Documents/Obsidian Vault"))
-MODEL         = os.getenv("MODEL",         "gpt-4o-mini")
-MODEL_BASE_URL = os.getenv("MODEL_BASE_URL", "https://models.inference.ai.azure.com")
+MODEL = os.getenv("MODEL", "claude-haiku-4-5")
 ANTHROPIC_NEWS     = os.getenv("ANTHROPIC_NEWS_URL",     "https://www.anthropic.com/news")
 ANTHROPIC_RESEARCH = os.getenv("ANTHROPIC_RESEARCH_URL", "https://www.anthropic.com/research")
 CLAUDE_BLOG        = os.getenv("CLAUDE_BLOG_URL",        "https://claude.com/blog")
@@ -126,8 +124,8 @@ def summarize(article, client):
                   .replace("{source}", SOURCES[article["source"]][1])
                   .replace("{title}", article["title"])
                   .replace("{content}", article["content"][:12000]))
-        text = client.chat.completions.create(model=MODEL, max_tokens=1024,
-            messages=[{"role": "user", "content": prompt}]).choices[0].message.content
+        text = client.messages.create(model=MODEL, max_tokens=1024,
+            messages=[{"role": "user", "content": prompt}]).content[0].text
         parts = {}
         for chunk in re.split(r"---SECTION---", text):
             chunk = chunk.strip()
@@ -140,16 +138,13 @@ def summarize(article, client):
             elif chunk.startswith("TAGS"):
                 parts["tags"] = re.findall(r"#\w[\w-]*", chunk)
         return parts if parts.get("summary") else None
-    except (openai.AuthenticationError, openai.PermissionDeniedError) as e:
-        # 401/403：凭证或权限问题，整个 run 无法继续
+    except (anthropic.AuthenticationError, anthropic.PermissionDeniedError) as e:
         log_exc(f"API auth/permission failure: {e}")
         sys.exit(1)
-    except openai.RateLimitError as e:
+    except anthropic.RateLimitError as e:
         if "86400" in str(e) or "ByDay" in str(e):
-            # 日限额耗尽，今天无法继续，停止处理剩余文章
-            log("WARN", f"Daily rate limit reached — stopping for today")
+            log("WARN", "Daily rate limit reached — stopping for today")
             raise _DailyLimitReached()
-        # 分钟限额：跳过这篇，继续下一篇
         log("WARN", f"Rate limited (per-minute), skipping '{article['title'][:50]}'")
         return None
     except Exception as e:
@@ -187,8 +182,8 @@ def write_digest(done, today, client):
         for d in subset)
     try:
         prompt = Path("prompts/digest.txt").read_text().format(articles_block=block)
-        text = client.chat.completions.create(model=MODEL, max_tokens=2048,
-            messages=[{"role": "user", "content": prompt}]).choices[0].message.content
+        text = client.messages.create(model=MODEL, max_tokens=2048,
+            messages=[{"role": "user", "content": prompt}]).content[0].text
         theme_m = re.search(r"---THEME---\s*(.+?)(?=---ARTICLES---|$)", text, re.DOTALL)
         theme = theme_m.group(1).strip() if theme_m else "今日无明显主线"
         arts_m = re.search(r"---ARTICLES---\s*(.+?)(?=---|$)", text, re.DOTALL)
@@ -211,7 +206,7 @@ def write_digest(done, today, client):
             f"# {today} 早间简报\n\n## 今日主题\n{theme}\n\n## 文章\n\n{arts}\n",
             encoding="utf-8")
         log("INFO", f"wrote Daily/{today}.md")
-    except (openai.AuthenticationError, openai.PermissionDeniedError) as e:
+    except (anthropic.AuthenticationError, anthropic.PermissionDeniedError) as e:
         log("ERROR", f"write_digest API auth failure: {e}")
         sys.exit(1)
     except Exception as e:
@@ -219,7 +214,11 @@ def write_digest(done, today, client):
         sys.exit(1)   # digest 失败视为整次 run 失败
 
 def main():
-    client = OpenAI(base_url=MODEL_BASE_URL, api_key=os.environ["GITHUB_TOKEN"])
+    api_key = os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("CLAUDE_CODE_OAUTH_TOKEN")
+    if not api_key:
+        log("ERROR", "Neither ANTHROPIC_API_KEY nor CLAUDE_CODE_OAUTH_TOKEN is set")
+        sys.exit(1)
+    client = anthropic.Anthropic(api_key=api_key)
     state, today = load_state(), datetime.now().strftime("%Y-%m-%d")
     articles = (fetch_anthropic() + fetch_anthropic_research() +
                 fetch_claude_blog() + fetch_openai() + fetch_openai_research() +
