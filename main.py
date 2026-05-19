@@ -141,6 +141,12 @@ def summarize(article, client):
     except (anthropic.AuthenticationError, anthropic.PermissionDeniedError) as e:
         log_exc(f"API auth/permission failure: {e}")
         sys.exit(1)
+    except anthropic.BadRequestError as e:
+        if "credit balance" in str(e).lower() or "too low" in str(e).lower():
+            log("ERROR", f"Insufficient API credits — add credits at platform.anthropic.com")
+            sys.exit(1)
+        log_exc(f"summarize bad request '{article['title'][:50]}': {e}")
+        return None
     except anthropic.RateLimitError as e:
         if "86400" in str(e) or "ByDay" in str(e):
             log("WARN", "Daily rate limit reached — stopping for today")
